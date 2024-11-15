@@ -6,6 +6,8 @@ __author__ = 'januschung'
 
 import argparse
 import random
+
+
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from functools import reduce
@@ -14,13 +16,71 @@ from typing import List, Tuple
 QuestionInfo = Tuple[int, str, int, int]
 
 
+class NumberGenerator():
+    def __init__(self, main_type, min_decimals, max_decimals):
+        self.main_type = main_type
+
+        self.lower_bound = 10 ** (min_decimals - 1)
+        self.upper_bound = 10 ** max_decimals - 1
+
+
+        self.type_question_distribution = {'+': 0, '-': 0, 'x': 0, '/': 0}
+
+        # From https://stackoverflow.com/questions/6800193/what-is-the-most-efficient-way-of-finding-all-the-factors-of-a
+        # -number-in-python
+
+    def factors(self, n: int):
+        return set(reduce(list.__add__,
+                          ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
+
+    def division_helper(self, num) -> [int, int, int]:
+        # prevent num = 0 or divisor = 1 or divisor = dividend
+        factor = 1
+        while not num or factor == 1 or factor == num:
+            num = self.next_number(can_be_zero=False,can_be_one=False)
+            # pick a factor of num; answer will always be an integer
+            if num:
+                factor = random.sample(list(self.factors(num)), 1)[0]
+        answer = int(num / factor)
+        return [num, factor, answer]
+
+    def next_number(self, can_be_zero=True,can_be_one=True):
+
+        while True:
+            n = random.randint(self.lower_bound, self.upper_bound)
+            if (not can_be_zero and n==0 ) or (not can_be_one and n==1):
+                continue
+            return n
+
+    def generate(self):
+
+        if self.main_type == 'mix':
+            options = [c[0] for c in self.type_question_distribution.items() if
+                       c[1] == min(self.type_question_distribution.values())]
+            current_type = random.choice(options)
+            self.type_question_distribution[current_type] = self.type_question_distribution[current_type] + 1
+        else:
+            current_type = self.main_type
+        num_1 = self.next_number()
+
+        if current_type=='/':
+            num_1,num_2,_=self.division_helper(num_1)
+        else:
+            num_2 = self.next_number()
+
+
+        return current_type, num_1, num_2
+
+
 class MathWorksheetGenerator:
     """class for generating math worksheet of specified size and main_type"""
-    def __init__(self, type_: str, max_number: int, question_count: int):
+
+    def __init__(self, type_: str, question_count: int, gg: NumberGenerator):
         self.main_type = type_
-        self.max_number = max_number
+
         self.question_count = question_count
         self.pdf = FPDF()
+        self.gg = gg
 
         self.small_font_size = 10
         self.middle_font_size = 15
@@ -34,34 +94,20 @@ class MathWorksheetGenerator:
         self.font_1 = 'Times'
         self.font_2 = 'Helvetica'
 
-    # From https://stackoverflow.com/questions/6800193/what-is-the-most-efficient-way-of-finding-all-the-factors-of-a
-    # -number-in-python
-    def factors(self, n: int):
-        return set(reduce(list.__add__,
-                          ([i, n//i] for i in range(1, int(n**0.5) + 1) if n % i == 0)))
 
-    def division_helper(self, num) -> [int, int, int]:
-        # prevent num = 0 or divisor = 1 or divisor = dividend
-        factor = 1
-        while not num or factor == 1 or factor == num:
-            num = random.randint(0, self.max_number)
-        # pick a factor of num; answer will always be an integer
-            if num:
-                factor = random.sample(list(self.factors(num)), 1)[0]
-        answer = int(num / factor)
-        return [num, factor, answer]
 
     def generate_question(self) -> QuestionInfo:
         """Generates each question and calculate the answer depending on the type_ in a list
         To keep it simple, number is generated randomly within the range of 0 to 100
         :return:  list of value1, main_type, value2, and answer for the generated question
         """
-        num_1 = random.randint(0, self.max_number)
-        num_2 = random.randint(0, self.max_number)
-        if self.main_type == 'mix':
-            current_type = random.choice(['+', '-', 'x', '/'])
-        else:
-            current_type = self.main_type
+        # num_1 = random.randint(0, self.max_number)
+        # num_2 = random.randint(0, self.max_number)
+        # if self.main_type == 'mix':
+        #     current_type = random.choice(['+', '-', 'x', '/'])
+        # else:
+        #     current_type = self.main_type
+        current_type, num_1, num_2 = self.gg.generate()
 
         if current_type == '+':
             answer = num_1 + num_2
@@ -72,7 +118,8 @@ class MathWorksheetGenerator:
         elif current_type == 'x':
             answer = num_1 * num_2
         elif current_type == '/':
-            num_1, num_2, answer = self.division_helper(num_1)
+            answer = int(num_1 / num_2)
+            # num_1, num_2, answer = self.division_helper(num_2)
 
         else:
             raise RuntimeError(f'Question main_type {current_type} not supported')
@@ -139,11 +186,13 @@ class MathWorksheetGenerator:
         """Helper function to print second character row of a question row for division"""
         self.pdf.set_font(self.font_2, size=self.large_font_size)
         self.pdf.cell(self.pad_size, self.size, border='L')
-        self.pdf.cell(self.size, self.size, txt=str(num_2), align='R')
-        x_cor = self.pdf.get_x() - 3
-        y_cor = self.pdf.get_y()
-        self.pdf.image(name='division.png', x=x_cor, y=y_cor)
         self.pdf.cell(self.size, self.size, txt=str(num_1), align='R')
+        # self.pdf.cell(self.size, self.size, txt=':', align='C')
+        x_cor = self.pdf.get_x()
+        y_cor = self.pdf.get_y() + (self.large_font_size / 2)
+        # self.pdf.text(x_cor, y_cor,':')
+        #        self.pdf.image(name='division.png', x=x_cor, y=y_cor)
+        self.pdf.cell(self.size, self.size, txt=': ' + str(num_2), align='R')
         self.pdf.cell(self.pad_size, self.size, border='R')
 
     def print_third_row(self, num: int, current_type: str):
@@ -219,26 +268,35 @@ class MathWorksheetGenerator:
         """Print answer sheet"""
         self.pdf.add_page(orientation='L')
         self.pdf.set_font(self.font_1, size=self.large_font_size)
-        self.pdf.cell(self.large_pad_size, self.large_pad_size, txt='Answers', new_x=XPos.LEFT, new_y=YPos.NEXT, align='C')
+        self.pdf.cell(self.large_pad_size, self.large_pad_size, txt='Answers', new_x=XPos.LEFT, new_y=YPos.NEXT,
+                      align='C')
 
         for i in range(len(data)):
             self.pdf.set_font(self.font_1, size=self.small_font_size)
             self.pdf.cell(self.pad_size, self.pad_size, txt=f'{i + 1}:', border='TLB', align='R')
             self.pdf.set_font(self.font_2, size=self.small_font_size)
-            self.pdf.cell(self.pad_size, self.pad_size, txt=str(data[i][3]), border='TB', align='R')
+            self.pdf.cell(self.pad_size*2, self.pad_size, txt=str(data[i][3]), border='TB', align='R')
             self.pdf.cell(self.tiny_pad_size, self.pad_size, border='TRB', align='R')
             self.pdf.cell(self.tiny_pad_size, self.pad_size, align='C')
-            if i >= 9 and (i + 1) % 10 == 0:
+            if (i + 1) % 8 == 0:
                 self.pdf.ln()
 
 
-def main(type_, size, question_count, filename):
+def main(type_, answers,answer_standalone, question_count, filename,gg):
     """main function"""
-    new_pdf = MathWorksheetGenerator(type_, size, question_count)
+    new_pdf = MathWorksheetGenerator(type_, question_count,gg)
     seed_question = new_pdf.get_list_of_questions(question_count)
     new_pdf.make_question_page(seed_question)
-    new_pdf.make_answer_page(seed_question)
-    new_pdf.pdf.output(filename)
+
+
+
+    if answer_standalone:
+        new_pdf.make_answer_page(seed_question)
+        new_pdf.pdf.output(filename[:-4]+'-answers.pdf')
+    else:
+        if answers:
+            new_pdf.make_answer_page(seed_question)
+        new_pdf.pdf.output(filename)
 
 
 if __name__ == "__main__":
@@ -250,17 +308,23 @@ if __name__ == "__main__":
         default='+',
         choices=['+', '-', 'x', '/', 'mix'],
         help='type of calculation: '
-        '+: Addition; '
-        '-: Subtraction; '
-        'x: Multiplication; '
-        '/: Division; '
-        'mix: Mixed; '
-        '(default: +)',
+             '+: Addition; '
+             '-: Subtraction; '
+             'x: Multiplication; '
+             '/: Division; '
+             'mix: Mixed; '
+             '(default: +)',
     )
     parser.add_argument(
-        '--digits',
+        '--min-digits',dest='min_digits',type=int,
         default='2',
-        choices=['1', '2', '3'],
+
+        help='range of numbers: 1: 0-9, 2: 0-99, 3: 0-999' '(default: 2 -> 0-99)',
+    )
+    parser.add_argument(
+        '--max-digits', dest='max_digits', type=int,
+        default='2',
+
         help='range of numbers: 1: 0-9, 2: 0-99, 3: 0-999' '(default: 2 -> 0-99)',
     )
     parser.add_argument(
@@ -273,14 +337,14 @@ if __name__ == "__main__":
     parser.add_argument('--output', metavar='filename.pdf', default='worksheet.pdf',
                         help='Output file to the given filename '
                              '(default: worksheet.pdf)')
+
+    parser.add_argument('--answers',action='store_true',help='include answers')
+    parser.add_argument('--answers-standalone',dest='answer_standalone', action='store_true', help='include standalone answers')
+
     args = parser.parse_args()
 
-    # how many places, 1:0-9, 2:0-99, 3:0-999
-    if args.digits == "1":
-        size_ = 9
-    elif args.digits == "3":
-        size_ = 999
-    else:
-        size_ = 99
 
-    main(args.type, size_, args.question_count, args.output)
+
+    gg = NumberGenerator(args.type,args.min_digits,args.max_digits)
+
+    main(args.type,args.answers,args.answer_standalone, args.question_count, args.output,gg)

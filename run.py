@@ -6,23 +6,23 @@ __author__ = 'januschung'
 
 import argparse
 import random
-
-
+import math
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from functools import reduce
 from typing import List, Tuple
 
+from pathlib import Path
+
 QuestionInfo = Tuple[int, str, int, int]
 
 
-class NumberGenerator():
+class NumberGenerator:
     def __init__(self, main_type, min_decimals, max_decimals):
         self.main_type = main_type
 
         self.lower_bound = 10 ** (min_decimals - 1)
         self.upper_bound = 10 ** max_decimals - 1
-
 
         self.type_question_distribution = {'+': 0, '-': 0, 'x': 0, '/': 0}
 
@@ -33,22 +33,31 @@ class NumberGenerator():
         return set(reduce(list.__add__,
                           ([i, n // i] for i in range(1, int(n ** 0.5) + 1) if n % i == 0)))
 
+    @staticmethod
+    def digits(num: int):
+        if num == 0:
+            return 1
+        else:
+            return  math.floor(math.log10(abs(num))) + 1
+
     def division_helper(self, num) -> [int, int, int]:
         # prevent num = 0 or divisor = 1 or divisor = dividend
         factor = 1
         while not num or factor == 1 or factor == num:
-            num = self.next_number(can_be_zero=False,can_be_one=False)
+            # num = random.randint(10 ** (1 - 1), min(10 ** 2 - 1, self.upper_bound))
             # pick a factor of num; answer will always be an integer
             if num:
-                factor = random.sample(list(self.factors(num)), 1)[0]
+                factor_list=[f for f in self.factors(num) if f!=1 and NumberGenerator.digits(f)<2]
+                if len(factor_list) >0:
+                    factor = random.sample(factor_list, 1)[0]
         answer = int(num / factor)
         return [num, factor, answer]
 
-    def next_number(self, can_be_zero=True,can_be_one=True):
+    def next_number(self, can_be_zero=True, can_be_one=True):
 
         while True:
-            n = random.randint(self.lower_bound, self.upper_bound)
-            if (not can_be_zero and n==0 ) or (not can_be_one and n==1):
+            n = random.randint(self.lower_bound,  self.upper_bound)
+            if (not can_be_zero and n == 0) or (not can_be_one and n == 1):
                 continue
             return n
 
@@ -63,11 +72,10 @@ class NumberGenerator():
             current_type = self.main_type
         num_1 = self.next_number()
 
-        if current_type=='/':
-            num_1,num_2,_=self.division_helper(num_1)
+        if current_type == '/':
+            num_1, num_2, _ = self.division_helper(num_1)
         else:
             num_2 = self.next_number()
-
 
         return current_type, num_1, num_2
 
@@ -93,8 +101,6 @@ class MathWorksheetGenerator:
         self.num_y_cell = 2
         self.font_1 = 'Times'
         self.font_2 = 'Helvetica'
-
-
 
     def generate_question(self) -> QuestionInfo:
         """Generates each question and calculate the answer depending on the type_ in a list
@@ -275,28 +281,40 @@ class MathWorksheetGenerator:
             self.pdf.set_font(self.font_1, size=self.small_font_size)
             self.pdf.cell(self.pad_size, self.pad_size, txt=f'{i + 1}:', border='TLB', align='R')
             self.pdf.set_font(self.font_2, size=self.small_font_size)
-            self.pdf.cell(self.pad_size*2, self.pad_size, txt=str(data[i][3]), border='TB', align='R')
+            self.pdf.cell(self.pad_size * 2, self.pad_size, txt=str(data[i][3]), border='TB', align='R')
             self.pdf.cell(self.tiny_pad_size, self.pad_size, border='TRB', align='R')
             self.pdf.cell(self.tiny_pad_size, self.pad_size, align='C')
             if (i + 1) % 8 == 0:
                 self.pdf.ln()
 
 
-def main(type_, answers,answer_standalone, question_count, filename,gg):
+def main(type_, answers, answer_standalone, question_count, filename, gg,  email_student, email_corrector):
     """main function"""
-    new_pdf = MathWorksheetGenerator(type_, question_count,gg)
+    new_pdf = MathWorksheetGenerator(type_, question_count, gg)
     seed_question = new_pdf.get_list_of_questions(question_count)
     new_pdf.make_question_page(seed_question)
 
 
-
+    exercise_path = filename
+    answer_path = filename[:-4] + '-answers.pdf'
     if answer_standalone:
+        new_pdf.pdf.output(exercise_path)
+        new_pdf.pdf = FPDF()
         new_pdf.make_answer_page(seed_question)
-        new_pdf.pdf.output(filename[:-4]+'-answers.pdf')
+        new_pdf.pdf.output(answer_path)
     else:
         if answers:
             new_pdf.make_answer_page(seed_question)
-        new_pdf.pdf.output(filename)
+            answer_path  = filename
+        new_pdf.pdf.output(exercise_path)
+
+    if  email_student:
+        from send_email import send_attachment
+        send_attachment(receiver_email=email_student,attachment_path=Path(exercise_path))
+
+    if  email_corrector:
+        from send_email import send_attachment
+        send_attachment(receiver_email=email_corrector,attachment_path=Path(answer_path))
 
 
 if __name__ == "__main__":
@@ -316,7 +334,7 @@ if __name__ == "__main__":
              '(default: +)',
     )
     parser.add_argument(
-        '--min-digits',dest='min_digits',type=int,
+        '--min-digits', dest='min_digits', type=int,
         default='2',
 
         help='range of numbers: 1: 0-9, 2: 0-99, 3: 0-999' '(default: 2 -> 0-99)',
@@ -338,13 +356,15 @@ if __name__ == "__main__":
                         help='Output file to the given filename '
                              '(default: worksheet.pdf)')
 
-    parser.add_argument('--answers',action='store_true',help='include answers')
-    parser.add_argument('--answers-standalone',dest='answer_standalone', action='store_true', help='include standalone answers')
+    parser.add_argument('--answers', action='store_true', help='include answers')
+    parser.add_argument('--answers-standalone', dest='answer_standalone', action='store_true',
+                        help='include standalone answers')
+
+    parser.add_argument('--email-student',dest='email_student', default=None)
+    parser.add_argument('--email-corrector',dest='email_corrector', default=None)
 
     args = parser.parse_args()
 
+    gg = NumberGenerator(args.type, args.min_digits, args.max_digits)
 
-
-    gg = NumberGenerator(args.type,args.min_digits,args.max_digits)
-
-    main(args.type,args.answers,args.answer_standalone, args.question_count, args.output,gg)
+    main(args.type, args.answers, args.answer_standalone, args.question_count, args.output, gg, args.email_student, args.email_corrector)
